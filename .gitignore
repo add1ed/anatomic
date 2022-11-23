@@ -1,0 +1,10 @@
+*
+
+!.gitignore
+
+!index.js
+!package.json
+!README.md
+
+!lib/
+!lib/**

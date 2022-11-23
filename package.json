@@ -1,0 +1,13 @@
+{
+  "name": "anatomic",
+  "version": "0.1.0",
+  "description": "Dependency-injection for nodejs applications.",
+  "files": [
+    "lib",
+    "index.js"
+  ],
+  "main": "index.js",
+  "repository": "github:add1ed/anatomic",
+  "author": "add1ed",
+  "license": "ISC"
+}
