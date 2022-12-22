@@ -35,11 +35,11 @@ module.exports = function (_params) {
   let currentDefinition
   let running = false
   let started
-  const defaultComponent = {
+  const defaultComponent = (name) => ({
     start (dependencies) {
-      return dependencies
+      return dependencies[name]
     }
-  }
+  });
 
   function bootstrap (path) {
     requireAll({
@@ -61,7 +61,7 @@ module.exports = function (_params) {
     const [name, component, options] = args
     debug('Adding component %s to system %s', name, params.name)
     if (Object.prototype.hasOwnProperty.call(definitions, name)) throw new Error(format('Duplicate component: %s', name))
-    if (args.length === 1) return add(name, defaultComponent)
+    if (args.length === 1) return add(name, defaultComponent(name))
     return _set(name, component, options)
   }
 
