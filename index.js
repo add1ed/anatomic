@@ -1,19 +1,12 @@
-const debug = function () {};
+const U = require('./lib/utils')
+const debug = U.optional('debug') || function () {};
 const format = require('util').format
 const Toposort = require('./lib/toposort')
 const requireAll = require('./lib/require-all')
-const {
-  randomName,
-  isFunction,
-  arraysIntersection,
-  hasProp,
-  getProp,
-  setProp
-} = require('./lib/utils')
 
 module.exports = function (_params) {
   const api = {}
-  const params = Object.assign({}, { name: randomName() }, _params)
+  const params = Object.assign({}, { name: U.randomName() }, _params)
   let definitions = {}
   let currentDefinition
   let running = false
@@ -30,7 +23,7 @@ module.exports = function (_params) {
       filter: /^(index.js)$/,
       resolve (exported) {
         const component = exported.default || exported
-        api.include(isFunction(component) ? component() : component)
+        api.include(U.isFunction(component) ? component() : component)
       }
     })
     return api
@@ -96,13 +89,7 @@ module.exports = function (_params) {
     return accumulator.concat(record)
   }
 
-  function start (cb) {
-    started = []
-    const p = startAsync()
-    return cb ? p.then(immediateCallback(cb)).catch(immediateError(cb, {})) : p
-  }
-
-  async function startAsync () {
+  async function start () {
     debug('Starting system %s', params.name)
     started = []
     const sorted = await sortComponents()
@@ -132,17 +119,12 @@ module.exports = function (_params) {
     started.push(name)
     const component = definitions[name].component
     const startedComponent = await component.start(dependencies)
-    setProp(system, name, startedComponent)
+    U.setProp(system, name, startedComponent)
     debug('Component %s started', name)
     return system
   }
 
-  function stop (cb) {
-    const p = stopAsync()
-    return cb ? p.then(immediateCallback(cb)).catch(immediateError(cb)) : p
-  }
-
-  async function stopAsync () {
+  async function stop () {
     debug('Stopping system %s', params.name)
     const sorted = await sortComponents()
     const filtered = await removeUnstarted(sorted)
@@ -164,64 +146,47 @@ module.exports = function (_params) {
     debug('Component %s stopped', name)
   }
 
-  async function sortComponents () {
+  function sortComponents () {
     const graph = new Toposort()
     Object.keys(definitions).forEach((name) => {
       graph.add(name, definitions[name].dependencies.map((dep) => dep.component))
     })
-    return arraysIntersection(graph.sort(), Object.keys(definitions))
+    return U.arraysIntersection(graph.sort(), Object.keys(definitions))
   }
 
-  async function removeUnstarted (components) {
-    return arraysIntersection(components, started)
+  function removeUnstarted (components) {
+    return U.arraysIntersection(components, started)
   }
 
-  async function getDependencies (name, system) {
+  function getDependencies (name, system) {
     const accumulator = {}
     for (const dependency of definitions[name].dependencies) {
-      if (!hasProp(definitions, dependency.component)) throw new Error(format('Component %s has an unsatisfied dependency on %s', name, dependency.component))
+      if (!U.hasProp(definitions, dependency.component)) throw new Error(format('Component %s has an unsatisfied dependency on %s', name, dependency.component))
       if (!Object.prototype.hasOwnProperty.call(dependency, 'source') && definitions[dependency.component].scoped) dependency.source = name
       dependency.source
         ? debug('Injecting dependency %s.%s as %s into %s', dependency.component, dependency.source, dependency.destination, name)
         : debug('Injecting dependency %s as %s into %s', dependency.component, dependency.destination, name)
-      const component = getProp(system, dependency.component)
-      setProp(accumulator, dependency.destination, dependency.source ? getProp(component, dependency.source) : component)
+      const component = U.getProp(system, dependency.component)
+      U.setProp(accumulator, dependency.destination, dependency.source ? U.getProp(component, dependency.source) : component)
     }
     return accumulator
   }
 
-  function noop (...args) {
+  function noop () {
     return
   }
 
   function wrap (component) {
     return {
-      start (dependencies) {
+      start () {
         return component
       }
     }
   }
 
-  function restart (cb) {
-    const p = api.stop().then(() => api.start())
-
-    return cb ? p.then(immediateCallback(cb)).catch(immediateError(cb)) : p
-  }
-
-  function immediateCallback (cb) {
-    return function (resolved) {
-      setImmediate(() => {
-        cb(null, resolved)
-      })
-    }
-  }
-
-  function immediateError (cb, resolved) {
-    return function (err) {
-      setImmediate(() => {
-        resolved ? cb(err, resolved) : cb(err)
-      })
-    }
+  async function restart () {
+    await api.stop();
+    return api.start();
   }
 
   Object.assign(api, {
@@ -244,5 +209,42 @@ module.exports = function (_params) {
   return api
 }
 
-module.exports.optional = require('./lib/optional')
-module.exports.runner = require('./lib/domain-runner')
+module.exports.optional = U.optional;
+
+module.exports.runner = function(system, options) {
+
+  if (!system) throw new Error('system is required')
+
+  const logger = options && options.logger || console;
+
+  return { start, stop };
+
+  async function start() {
+    const components = await system.start();
+    
+    process.on('error', (err) => die('Unhandled error. Invoking shutdown.', err));
+    process.on('unhandledRejection', (err) => die('Unhandled rejection. Invoking shutdown.', err));
+    process.on('SIGINT', () => exitOk('SIGINT'));
+    process.on('SIGTERM', () => exitOk('SIGTERM'));
+    
+    return components;
+  }
+
+  async function stop() {
+    await system.stop();
+  }
+
+  async function die(msg, err) {
+    logger.error(msg);
+    if (err) logger.error(err.stack);
+    await system.stop();
+    process.exit(1);
+  }
+
+  async function exitOk(signal) {
+    logger.info(`Received ${signal}. Attempting to shutdown gracefully.`);
+    await system.stop();
+    process.exit(0);
+  }
+}
+
