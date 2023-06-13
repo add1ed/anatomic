@@ -7,7 +7,17 @@
     "index.js"
   ],
   "main": "index.js",
+  "scripts": {
+    "test": "zUnit"
+  },
   "repository": "github:add1ed/anatomic",
   "author": "add1ed",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "@add1ed/test": "0.3.0"
+  },
+  "zUnit": {
+    "exit": true,
+    "pollute": true
+  }
 }

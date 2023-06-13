@@ -9,3 +9,6 @@
 
 !lib/
 !lib/**
+
+!test/
+!test/**
