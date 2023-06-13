@@ -341,6 +341,115 @@ describe("System", () => {
     assert(Object.keys(components).includes("bar"));
   });
 
+  describe("namespacing", () => {
+    it("should add namespace prefix when adding component", async () => {
+      const components = await System()
+        .namespace("pizza")
+        .add("olives", new PromiseComponent())
+        .start();
+
+      assert(!components.olives);
+      assert(components.pizza.olives);
+    });
+
+    it("should add namespace prefix when setting component", async () => {
+      const components = await System()
+        .namespace("pizza")
+        .add("olives", new ErrorPromiseComponent())
+        .set("olives", new PromiseComponent())
+        .start();
+
+      assert(!components.olives);
+      assert(components.pizza.olives);
+    });
+
+    it("should add namespace prefix when removing component", async () => {
+      const components = await System()
+        .namespace("pizza")
+        .add("olives", new ErrorPromiseComponent())
+        .add("capers", new PromiseComponent())
+        .remove("olives")
+        .start();
+
+      assert(!components.olives);
+      assert(!components.pizza.olives);
+    });
+
+    it("should strip namespace prefix when depending on component", async () => {
+      const components = await System()
+        .namespace("pizza")
+        .add("olives", new PromiseComponent())
+        .add("capers", new PromiseComponent())
+        .dependsOn("pizza.olives")
+        .start();
+
+      assert(components.pizza.capers.dependencies.olives);
+    });
+
+    it("should be able to depend on included namespaced components", async () => {
+      const components = await System()
+        .add("delicious", new PromiseComponent()).dependsOn("pizza.olives")
+        .include(
+          System()
+            .namespace("pizza")
+            .add("olives", new PromiseComponent())
+            .add("capers", new PromiseComponent())
+            .dependsOn("pizza.olives"),
+        )
+        .start();
+
+      assert(components.delicious.dependencies.pizza.olives);
+    });
+
+    it("should be able to depend on included namespaced components", async () => {
+      const components = await System()
+        .add("delicious", new PromiseComponent()).dependsOn("pizza.olives")
+        .include(
+          System()
+            .namespace("pizza")
+            .add("olives", new PromiseComponent())
+            .add("capers", new PromiseComponent())
+            .dependsOn("pizza.olives")
+            .add("pizza").dependsOn("pizza.olives", "pizza.capers"),
+        )
+        .start();
+
+      assert(components.delicious.dependencies.pizza.olives);
+    });
+
+    it("should group components", async () => {
+      const components = await System()
+        .include(
+          System()
+            .namespace("foo")
+            .add("bar.one", 1)
+            .add("bar.two", 2)
+            .add("bar").dependsOn("foo.bar.one", "foo.bar.two"),
+        )
+        .add("blah", 4).dependsOn("foo.bar")
+        .start();
+
+      assert.equal(components.foo.bar.one, 1);
+      assert.equal(components.foo.bar.two, 2);
+    });
+
+    it("should group namespace-level components", async () => {
+      const components = await System()
+        .include(
+          System()
+            .namespace("foo")
+            .add("one", 1)
+            .add("two", 2)
+            .add("foo").dependsOn("foo.one", "foo.two"),
+        )
+        .add("blah", 4).dependsOn("foo")
+        .start();
+
+      assert.equal(components.foo.one, 1);
+      assert.equal(components.foo.two, 2);
+    });
+  });
+
   function PromiseComponent() {
     const state = {
       counter: 0,

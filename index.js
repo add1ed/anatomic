@@ -7,13 +7,14 @@ const requireAll = require('./lib/require-all')
 module.exports = function (_params) {
   const api = {}
   const params = Object.assign({}, { name: U.randomName() }, _params)
+  let _namespace
   let definitions = {}
   let currentDefinition
   let running = false
   let started
   const defaultComponent = (name) => ({
     start (dependencies) {
-      return dependencies[name]
+      return !!name ? dependencies[name] : dependencies;
     }
   });
 
@@ -33,20 +34,54 @@ module.exports = function (_params) {
     return add('config', component, { scoped: true })
   }
 
+  function namespace(name) {
+    _namespace = name;
+    return api
+  }
+
+  function addNamespace(name) {
+    return !!_namespace 
+      ? `${_namespace}.${name}`
+      : name;
+  }
+
+  function removeNamespace(name) {
+    return !!_namespace 
+      ? name.replace(`${_namespace}.`, '')
+      : name;
+  }
+
+  function needsNamespacing(name) {
+    if (!_namespace) return false;
+    if (name === _namespace) return false;
+    return !name.startsWith(`${_namespace}.`); 
+  }
+
+  function isNamespace(name) {
+    return !!_namespace && _namespace === name;
+  }
+
+  function isNamespaced(name) {
+    return isNamespace(name) || name.startsWith(`${_namespace}.`)
+  }
+
   function add (...args) {
-    const [name, component, options] = args
+    let [_name, component, options] = args
+    const name = needsNamespacing(_name) ? addNamespace(_name) : _name;
     debug('Adding component %s to system %s', name, params.name)
     if (Object.prototype.hasOwnProperty.call(definitions, name)) throw new Error(format('Duplicate component: %s', name))
-    if (args.length === 1) return add(name, defaultComponent(name))
+    if (args.length === 1) return add(name, defaultComponent(isNamespace(name) ? null : _name))
     return _set(name, component, options)
   }
 
   function set (name, component, options) {
+    if (needsNamespacing(name)) name = addNamespace(name);
     debug('Setting component %s on system %s', name, params.name)
     return _set(name, component, options)
   }
 
   function remove (name) {
+    if (needsNamespacing(name)) name = addNamespace(name);
     debug('Removing component %s from system %s', name, params.name)
     delete definitions[name]
     return api
@@ -79,7 +114,7 @@ module.exports = function (_params) {
     const record = typeof arg === 'string'
       ? {
           component: arg,
-          destination: arg
+          destination: isNamespaced(arg) ? removeNamespace(arg) : arg
         }
       : Object.assign({}, { destination: arg.component }, arg)
     if (!record.component) throw new Error(format('Component %s has an invalid dependency %s', currentDefinition.name, JSON.stringify(arg)))
@@ -193,10 +228,10 @@ module.exports = function (_params) {
     name: params.name,
     bootstrap,
     configure,
+    namespace,
     add,
     set,
     remove,
-    merge: include,
     include,
     dependsOn,
     comesAfter: dependsOn,
