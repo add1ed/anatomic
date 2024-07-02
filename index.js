@@ -1,36 +1,30 @@
-const U = require('./lib/utils')
-const debug = U.optional('debug') || function () {};
-const format = require('util').format
-const Toposort = require('./lib/toposort')
-const requireAll = require('./lib/require-all')
+const U = require('./lib/utils');
+const toposort = require("./lib/toposort");
+const requireAll = require('./lib/require-all');
 
-module.exports = function (_params) {
-  const api = {}
-  const params = Object.assign({}, { name: U.randomName() }, _params)
-  let _namespace
-  let definitions = {}
-  let currentDefinition
-  let running = false
-  let started
-  const defaultComponent = (name) => ({
-    start (dependencies) {
-      return !!name ? dependencies[name] : dependencies;
-    }
-  });
+module.exports = function anatomic(_params) {
+  const api = {};
+  const apiName = _params?.name ?? U.randomName();
+  let _namespace;
+  let definitions = {};
+  let currentDefinition;
+  let running = false;
+  let started = new Set();
 
-  function bootstrap (path) {
+  function bootstrap(path) {
     requireAll({
       dirname: path,
       filter: /^(index.js)$/,
-      resolve (exported) {
+      resolve(exported) {
         const component = exported.default || exported
         api.include(U.isFunction(component) ? component() : component)
       }
-    })
-    return api
+    });
+
+    return api;
   }
 
-  function configure (component) {
+  function configure(component) {
     return add('config', component, { scoped: true })
   }
 
@@ -39,193 +33,114 @@ module.exports = function (_params) {
     return api
   }
 
-  function addNamespace(name) {
-    return !!_namespace 
-      ? `${_namespace}.${name}`
-      : name;
+  function _addNamespace(name) {
+    if (!_namespace || name === _namespace || name.startsWith(`${_namespace}.`)) {
+      return name;
+    }
+    return `${_namespace}.${name}`;
   }
 
-  function removeNamespace(name) {
-    return !!_namespace 
-      ? name.replace(`${_namespace}.`, '')
-      : name;
+  function _removeNamespace(name) {
+    if (!_namespace) return name;
+    if (_namespace === name) return '';
+    const prefix = `${_namespace}.`;
+    return name.startsWith(prefix) ? name.replace(prefix, '') : name;
   }
 
-  function needsNamespacing(name) {
-    if (!_namespace) return false;
-    if (name === _namespace) return false;
-    return !name.startsWith(`${_namespace}.`); 
-  }
-
-  function isNamespace(name) {
+  function _isNamespace(name) {
     return !!_namespace && _namespace === name;
   }
 
-  function isNamespaced(name) {
-    return isNamespace(name) || name.startsWith(`${_namespace}.`)
+  function add(_name, component, options) {
+    const name = _addNamespace(_name);
+    if (!!definitions[name]) throw new Error(`Duplicate component: ${name}`);
+    if (arguments.length === 1) { component = defaultComponent(_isNamespace(name) ? null : _name); }
+    return _set(name, component, options);
   }
 
-  function add (...args) {
-    let [_name, component, options] = args
-    const name = needsNamespacing(_name) ? addNamespace(_name) : _name;
-    debug('Adding component %s to system %s', name, params.name)
-    if (Object.prototype.hasOwnProperty.call(definitions, name)) throw new Error(format('Duplicate component: %s', name))
-    if (args.length === 1) return add(name, defaultComponent(isNamespace(name) ? null : _name))
-    return _set(name, component, options)
+  function set(name, component, options) {
+    return _set(_addNamespace(name), component, options);
   }
 
-  function set (name, component, options) {
-    if (needsNamespacing(name)) name = addNamespace(name);
-    debug('Setting component %s on system %s', name, params.name)
-    return _set(name, component, options)
+  function remove(name) {
+    delete definitions[_addNamespace(name)];
+    return api;
   }
 
-  function remove (name) {
-    if (needsNamespacing(name)) name = addNamespace(name);
-    debug('Removing component %s from system %s', name, params.name)
-    delete definitions[name]
-    return api
+  function _set(name, component, options) {
+    if (!component) throw new Error(`Component ${name} is null or undefined`);
+    definitions[name] = { ...options, ...baseDefinition(name, component) };
+    currentDefinition = definitions[name];
+    return api;
   }
 
-  function _set (name, component, options) {
-    if (!component) throw new Error(format('Component %s is null or undefined', name))
-    definitions[name] = Object.assign({}, options, {
-      name,
-      component: component.start ? component : wrap(component),
-      dependencies: []
-    })
-    currentDefinition = definitions[name]
-    return api
+  function include(subSystem) {
+    definitions = { ...definitions, ...subSystem._definitions };
+    return api;
   }
 
-  function include (subSystem) {
-    debug('Including definitions from sub system %s into system %s', subSystem.name, params.name)
-    definitions = Object.assign({}, definitions, subSystem._definitions)
-    return api
-  }
-
-  function dependsOn (...args) {
+  function dependsOn(...args) {
     if (!currentDefinition) throw new Error('You must add a component before calling dependsOn')
-    currentDefinition.dependencies = args.reduce(toDependencyDefinitions, currentDefinition.dependencies)
-    return api
+
+    currentDefinition.dependencies = args.reduce((accumulator, arg) => {
+      const record = typeof arg === 'string' ? { destination: _removeNamespace(arg), component: arg } : { destination: arg.component, ...arg };
+      const { name, dependencies } = currentDefinition;
+      if (!record.component) {
+        throw new Error(`Component ${name} has an invalid dependency ${JSON.stringify(arg)}`);
+      }
+      if (dependencies.find((dep) => dep.destination === record.destination)) {
+        throw new Error(`Component ${name} has a duplicate dependency ${record.destination}`);
+      }
+      return accumulator.concat(record);
+    }, currentDefinition.dependencies);
+
+    return api;
   }
 
-  function toDependencyDefinitions (accumulator, arg) {
-    const record = typeof arg === 'string'
-      ? {
-          component: arg,
-          destination: isNamespaced(arg) ? removeNamespace(arg) : arg
+  async function start() {
+    if (running) return running;
+
+    const getDependencies = (name, system) => {
+      const accumulator = {}
+      for (const dep of definitions[name].dependencies) {
+        const componentName = dep.component;
+        if (!U.hasProp(definitions, componentName)) {
+          throw new Error(`Component ${name} has an unsatisfied dependency on ${componentName}`);
         }
-      : Object.assign({}, { destination: arg.component }, arg)
-    if (!record.component) throw new Error(format('Component %s has an invalid dependency %s', currentDefinition.name, JSON.stringify(arg)))
-    if (currentDefinition.dependencies.find((dep) => dep.destination === record.destination)) {
-      throw new Error(format('Component %s has a duplicate dependency %s', currentDefinition.name, record.destination))
+        if (!Object.prototype.hasOwnProperty.call(dep, 'source') && definitions[componentName].scoped) {
+          dep.source = name;
+        }
+        const definition = U.getProp(system, componentName);
+        U.setProp(accumulator, dep.destination, dep.source ? U.getProp(definition, dep.source) : definition);
+      }
+      return accumulator;
+    };
+
+    started = new Set();
+    const system = {};
+    const sorted = U.arraysIntersection(sortComponents(definitions), Object.keys(definitions));
+    for (const componentName of sorted.reverse()) {
+      const dependencies = getDependencies(componentName, system);
+      started.add(componentName);
+      const component = await definitions[componentName].component.start(dependencies);
+      U.setProp(system, componentName, component);
     }
-    return accumulator.concat(record)
+    running = system;
+
+    return system;
   }
 
-  async function start () {
-    debug('Starting system %s', params.name)
-    started = []
-    const sorted = await sortComponents()
-    const system = await ensureComponents(sorted)
-    debug('System %s started', params.name)
-    running = system
-    return system
-  }
-
-  async function ensureComponents (components) {
-    if (running) return running
-    const system = {}
-    for (const component of components.reverse()) {
-      await toSystem(system, component)
+  async function stop() {
+    for (const componentName of sortComponents(definitions)) {
+      if (started.has(componentName)) {
+        await definitions[componentName]?.component?.stop?.();
+      }
     }
-    return system
-  }
-
-  async function toSystem (system, name) {
-    debug('Inspecting compontent %s', name)
-    const dependencies = await getDependencies(name, system)
-    await startComponent(dependencies, name, system)
-  }
-
-  async function startComponent (dependencies, name, system) {
-    debug('Starting component %s', name)
-    started.push(name)
-    const component = definitions[name].component
-    const startedComponent = await component.start(dependencies)
-    U.setProp(system, name, startedComponent)
-    debug('Component %s started', name)
-    return system
-  }
-
-  async function stop () {
-    debug('Stopping system %s', params.name)
-    const sorted = await sortComponents()
-    const filtered = await removeUnstarted(sorted)
-    await stopComponents(filtered)
-    debug('System %s stopped', params.name)
     running = false
   }
 
-  async function stopComponents (components) {
-    for (const component of components) {
-      await stopComponent(component)
-    }
-  }
-
-  async function stopComponent (name) {
-    debug('Stopping component %s', name)
-    const stop = definitions[name].component.stop || noop
-    await stop()
-    debug('Component %s stopped', name)
-  }
-
-  function sortComponents () {
-    const graph = new Toposort()
-    Object.keys(definitions).forEach((name) => {
-      graph.add(name, definitions[name].dependencies.map((dep) => dep.component))
-    })
-    return U.arraysIntersection(graph.sort(), Object.keys(definitions))
-  }
-
-  function removeUnstarted (components) {
-    return U.arraysIntersection(components, started)
-  }
-
-  function getDependencies (name, system) {
-    const accumulator = {}
-    for (const dependency of definitions[name].dependencies) {
-      if (!U.hasProp(definitions, dependency.component)) throw new Error(format('Component %s has an unsatisfied dependency on %s', name, dependency.component))
-      if (!Object.prototype.hasOwnProperty.call(dependency, 'source') && definitions[dependency.component].scoped) dependency.source = name
-      dependency.source
-        ? debug('Injecting dependency %s.%s as %s into %s', dependency.component, dependency.source, dependency.destination, name)
-        : debug('Injecting dependency %s as %s into %s', dependency.component, dependency.destination, name)
-      const component = U.getProp(system, dependency.component)
-      U.setProp(accumulator, dependency.destination, dependency.source ? U.getProp(component, dependency.source) : component)
-    }
-    return accumulator
-  }
-
-  function noop () {
-    return
-  }
-
-  function wrap (component) {
-    return {
-      start () {
-        return component
-      }
-    }
-  }
-
-  async function restart () {
-    await api.stop();
-    return api.start();
-  }
-
   Object.assign(api, {
-    name: params.name,
+    name: apiName,
     bootstrap,
     configure,
     namespace,
@@ -237,16 +152,43 @@ module.exports = function (_params) {
     comesAfter: dependsOn,
     start,
     stop,
-    restart,
     _definitions: definitions
   })
 
-  return api
+  return api;
+}
+
+function baseDefinition(name, comp) {
+  const component = comp.start ? comp : { start() { return comp; } };
+  return { name, component, dependencies: [] };
+}
+
+function defaultComponent(name) {
+  return {
+    start(dependencies) {
+      return !!name ? dependencies[name] : dependencies;
+    }
+  };
+}
+
+function sortComponents(definitions) {
+  return toposort(definitions, (v) => v.dependencies.map(d => d.component));
+}
+
+module.exports.requireAll = function (path) {
+  return requireAll({
+    dirname: path,
+    filter: /^(index.js)$/,
+    resolve(exported) {
+      const component = exported.default || exported;
+      return U.isFunction(component) ? component() : component;
+    }
+  });
 }
 
 module.exports.optional = U.optional;
 
-module.exports.runner = function(system, options) {
+module.exports.runner = function (system, options) {
 
   if (!system) throw new Error('system is required')
 
@@ -256,12 +198,12 @@ module.exports.runner = function(system, options) {
 
   async function start() {
     const components = await system.start();
-    
+
     process.on('error', (err) => die('Unhandled error. Invoking shutdown.', err));
     process.on('unhandledRejection', (err) => die('Unhandled rejection. Invoking shutdown.', err));
     process.on('SIGINT', () => exitOk('SIGINT'));
     process.on('SIGTERM', () => exitOk('SIGTERM'));
-    
+
     return components;
   }
 

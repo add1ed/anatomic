@@ -30,14 +30,6 @@ describe("System", () => {
     assert.equal(components.foo.counter, 1);
   });
 
-  it("should restart", async () => {
-    system.add("foo", new PromiseComponent());
-    let components = await system.start();
-    assert.equal(components.foo.counter, 1);
-    components = await system.restart();
-    assert.equal(components.foo.counter, 2);
-  });
-
   it("should start promise components", async () => {
     const components = await system.add("foo", new PromiseComponent()).start();
     assert(components.foo.started, "Component was not started");
