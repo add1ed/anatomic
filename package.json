@@ -8,16 +8,9 @@
   ],
   "main": "index.js",
   "scripts": {
-    "test": "zUnit"
+    "test": "node --test"
   },
   "repository": "github:add1ed/anatomic",
   "author": "add1ed",
-  "license": "ISC",
-  "devDependencies": {
-    "@add1ed/test": "0.3.0"
-  },
-  "zUnit": {
-    "exit": true,
-    "pollute": true
-  }
+  "license": "ISC"
 }
