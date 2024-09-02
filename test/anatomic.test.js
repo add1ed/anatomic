@@ -1,6 +1,5 @@
-const { describe, it, beforeEach } = require("node:test");
+const { describe, it } = require("node:test");
 const assert = require("assert");
-const path = require("path");
 const System = require("..");
 
 describe("System", () => {
@@ -78,6 +77,26 @@ describe("System", () => {
     const components = await System.start(system);
     await System.stop(system);
     assert(components.foo.stopped, "Component was not stopped");
+  });
+
+  it("should pass through nested components", async () => {
+    const components = await System({
+      foo: {
+        bar: { init: PromiseComponent(), dependsOn: "config" },
+        fizz: { init: PromiseComponent(), dependsOn: "config" },
+        gelato: 1
+      },
+      config: { foo: { bar: { like: "pasta" }, fizz: { like: "pizza" } } },
+      blah: { init: PromiseComponent(), dependsOn: "foo" },
+      buzz: { init: PromiseComponent(), dependsOn: { bar: "foo.bar" } }
+    }).start();
+
+    assert.equal(components.foo.bar.dependencies.config.like, "pasta");
+    assert.equal(components.foo.fizz.dependencies.config.like, "pizza");
+    assert.ok(components.blah.dependencies.foo.bar.started)
+    assert.ok(components.buzz.dependencies.bar.started)
+    assert.ok(components.foo.bar.started);
+    assert.ok(components.foo.fizz.started);
   });
 
   it("should reject attempts to add an undefined component", () => {
@@ -177,10 +196,9 @@ describe("System", () => {
 
   it("should support nested component names", async () => {
     const components = await System({
-      "foo.bar": { init: new PromiseComponent() },
-      baz: { init: new PromiseComponent(), dependsOn: ["foo.bar"] }
+      "foo.bar": { init: PromiseComponent() },
+      baz: { init: new PromiseComponent(), dependsOn: "foo.bar" }
     }).start();
-
     assert(components.foo.bar.started);
     assert(components.baz.dependencies.foo.bar);
   });

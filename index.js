@@ -1,8 +1,9 @@
 const anatomic = require("./lib/anatomic");
 
 module.exports = anatomic;
+module.exports.runner = runner;
 
-module.exports.runner = function (system, options) {
+function runner(system, options) {
 
   if (!system) throw new Error('system is required')
 
