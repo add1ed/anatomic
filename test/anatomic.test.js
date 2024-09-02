@@ -100,16 +100,23 @@ describe("System", () => {
       });
   });
 
-  it("should inject dependencies", async () => {
+  it("should inject dependency", async () => {
     const components = await System({
       bar: { init: PromiseComponent() },
-      baz: { init: PromiseComponent() },
-      foo: { init: PromiseComponent(), dependsOn: ["bar", "baz"] }
+      foo: { init: PromiseComponent(), dependsOn: "bar" }
     })
       .start();
 
     assert(components.foo.dependencies.bar);
-    assert(components.foo.dependencies.baz);
+  });
+
+  it("should wait for anything it comes after", async () => {
+    const bar = PromiseComponent();
+    await System({ foo: { init: ErrorPromiseComponent(), comesAfter: "bar" }, bar })
+      .start()
+      .catch(assert.ok);
+
+    assert.ok(bar.state.started);
   });
 
   it("should inject multiple dependencies expressed in a single dependsOn", async () => {
@@ -133,6 +140,32 @@ describe("System", () => {
     assert(components.foo.dependencies.baz);
   });
 
+  it("should map dependencies declared in object form to a new name", async () => {
+    const components = await System({
+      bar: PromiseComponent(), fizz: PromiseComponent(),
+      foo: { init: new PromiseComponent(), dependsOn: { baz: "bar", buzz: "fizz" } }
+    }).start();
+
+    assert(!components.foo.dependencies.bar);
+    assert(!components.foo.dependencies.fizz);
+    assert(components.foo.dependencies.baz);
+    assert(components.foo.dependencies.buzz);
+  });
+
+  it("should map dependencies declared in mixed form to new names", async () => {
+    const components = await System({
+      bar: 1, fizz: 2, pizza: 3, pasta: 4,
+      foo: { init: PromiseComponent(), dependsOn: [{ baz: "bar", buzz: "fizz", pasta: "pasta" }, "pizza"] }
+    }).start();
+
+    assert(!components.foo.dependencies.bar);
+    assert(!components.foo.dependencies.fizz);
+    assert(components.foo.dependencies.baz);
+    assert(components.foo.dependencies.buzz);
+    assert(components.foo.dependencies.pasta);
+    assert(components.foo.dependencies.pizza);
+  });
+
   it("should inject dependencies defined out of order", async () => {
     const components = await System({
       foo: { init: new PromiseComponent(), dependsOn: ["bar"] },
@@ -154,17 +187,26 @@ describe("System", () => {
 
   it("should inject dependency sub documents", async () => {
     const components = await System({
-      pizza: { init: { foo: { bar: "baz" } } },
-      foo: { init: new PromiseComponent(), dependsOn: [{ component: "pizza", source: "foo", destination: "pizza" }] }
+      pizza: { foo: { bar: "baz" } },
+      foo: { init: PromiseComponent(), dependsOn: { component: "pizza", source: "foo", destination: "blah" } }
     }).start();
 
-    assert(components.foo.dependencies.pizza.bar, "baz");
+    assert(components.foo.dependencies.blah.bar, "baz");
+  });
+
+  it("should inject dependency sub documents using object form", async () => {
+    const components = await System({
+      pizza: { foo: { bar: "baz" } },
+      foo: { init: PromiseComponent(), dependsOn: { blah: "pizza.foo" } }
+    }).start();
+
+    assert(components.foo.dependencies.blah.bar, "baz");
   });
 
   it("should reject invalid dependencies", () => {
     assert.throws(() => {
       System({ foo: { init: new PromiseComponent(), dependsOn: [1] } });
-    }, { message: "Component foo has an invalid dependency {}" });
+    }, { message: "Component foo has an invalid dependency 1" });
 
     assert.throws(() => {
       System({ foo: { init: new PromiseComponent(), dependsOn: [{}] } });
@@ -207,6 +249,16 @@ describe("System", () => {
     assert(components.foo.dependencies.b);
   });
 
+  it("should tolerate duplicate dependencies in object form with different destinations", async () => {
+    const components = await System({
+      foo: { init: PromiseComponent(), dependsOn: { a: "bar", b: "bar" } },
+      bar: 1
+    }).start();
+
+    assert(components.foo.dependencies.a);
+    assert(components.foo.dependencies.b);
+  });
+
   it("should reject duplicate dependency implicit destinations", () => {
     assert.throws(() => {
       System({ foo: { init: new PromiseComponent(), dependsOn: ["bar", "bar"] } })
@@ -227,20 +279,33 @@ describe("System", () => {
     }, { message: "Component foo has a duplicate dependency baz" });
   });
 
-  it("should provide a shorthand for scoped dependencies such as config", async () => {
+  it("should provide a shorthand for scoped dependencies", async () => {
     const components = await System({
-      config: { init: new Config({ foo: { bar: "baz" } }) },
-      foo: {
-        init: new PromiseComponent(),
-        dependsOn: ["config"]
-      }
+      pizza: { init: { foo: { bar: "baz" } }, scoped: true },
+      foo: { init: PromiseComponent(), dependsOn: "pizza" }
+    }).start();
+    assert.equal(components.foo.dependencies.pizza.bar, "baz");
+  });
+
+  it("should provide a shorthand for config (which is scoped by default)", async () => {
+    const components = await System({
+      config: { foo: { bar: "baz" } },
+      foo: { init: PromiseComponent(), dependsOn: "config" }
     }).start();
     assert.equal(components.foo.dependencies.config.bar, "baz");
   });
 
-  it("should allow shorthand to be overriden", async () => {
+  it("should allow shorthand for config to be disabled", async () => {
     const components = await System({
-      config: { init: new Config({ foo: { bar: "baz" } }) },
+      config: { foo: { bar: "baz" }, scoped: false },
+      foo: { init: PromiseComponent(), dependsOn: "config" }
+    }).start();
+    assert.ok(components.foo.dependencies.config.foo);
+  });
+
+  it("should allow shorthand to be overriden at component level", async () => {
+    const components = await System({
+      config: { init: { foo: { bar: "baz" } } },
       foo: {
         init: new PromiseComponent(),
         dependsOn: [{ component: "config", source: "" }]
@@ -249,10 +314,16 @@ describe("System", () => {
     assert.equal(components.foo.dependencies.config.foo.bar, "baz");
   });
 
+  it("should allow shorthand to be overriden at component level using object form", async () => {
+    const components = await System({
+      config: { foo: { bar: "baz" } },
+      foo: { init: PromiseComponent(), dependsOn: { config: "config." } }
+    }).start();
+    assert.equal(components.foo.dependencies.config.foo.bar, "baz");
+  });
+
   it("should include components from other systems", async () => {
-    const components = await System()
-      .include(System({ foo: PromiseComponent }))
-      .start();
+    const components = await System().include(System({ foo: PromiseComponent })).start();
     assert.ok(components.foo);
   });
 
@@ -262,15 +333,15 @@ describe("System", () => {
   });
 
   it("should be able to depend on included components", async () => {
-    const components = await System({ bar: { init: PromiseComponent(), dependsOn: ["foo"] } })
-      .include(System({ foo: PromiseComponent }))
+    const components = await System({ bar: { init: PromiseComponent(), dependsOn: "foo" } })
+      .include(System({ foo: 1 }))
       .start();
     assert.ok(components.bar.dependencies.foo);
   });
 
   it("should configure components from included systems", async () => {
-    const components = await System({ config: { init: new Config({ foo: { bar: "baz" } }) } })
-      .include(System({ foo: { init: PromiseComponent(), dependsOn: ["config"] } }))
+    const components = await System({ config: { foo: { bar: "baz" } } })
+      .include(System({ foo: { init: PromiseComponent(), dependsOn: "config" } }))
       .start();
     assert.equal(components.foo.dependencies.config.bar, "baz");
   });
@@ -293,12 +364,8 @@ describe("System", () => {
   });
 
   function PromiseComponent() {
-    const state = {
-      counter: 0,
-      started: true,
-      stopped: true,
-      dependencies: [],
-    };
+    const state = { counter: 0, started: true, stopped: true, dependencies: [] };
+    const sleep = (x) => new Promise((resolve) => { setTimeout(resolve(x), 10) });
 
     return {
       state,
@@ -306,19 +373,11 @@ describe("System", () => {
         state.started = true;
         state.counter++;
         state.dependencies = dependencies;
-        return new Promise((resolve) => {
-          setTimeout(() => {
-            resolve(state);
-          }, 10);
-        });
+        return sleep(state);
       },
       stop() {
         state.stopped = true;
-        return new Promise((resolve) => {
-          setTimeout(() => {
-            resolve();
-          }, 10);
-        });
+        return sleep(state);
       }
     }
   }
@@ -330,14 +389,12 @@ describe("System", () => {
   function Unstoppable() {
     const state = { started: true, stopped: true, dependencies: [] };
 
-    this.start = (dependencies) => {
-      state.started = true;
-      state.dependencies = dependencies;
-      return state;
+    return {
+      start(dependencies) {
+        state.started = true;
+        state.dependencies = dependencies;
+        return state;
+      }
     };
-  }
-
-  function Config(config) {
-    return { start() { return Promise.resolve(config) } };
   }
 });
