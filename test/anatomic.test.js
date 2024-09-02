@@ -15,6 +15,12 @@ describe("System", () => {
     await system.stop();
   });
 
+  it("should work via static functions", async () => {
+    const system = System.create();
+    await System.start(system);
+    await System.stop(system);
+  });
+
   it("should tolerate being stopped without being started", () =>
     System().stop());
 
@@ -32,27 +38,27 @@ describe("System", () => {
   });
 
   it("should stop promise components", async () => {
-    const system = await System({ foo: { init: new PromiseComponent() } });
+    const system = System({ foo: { init: PromiseComponent() } });
     const components = await system.start();
     await system.stop();
     assert(components.foo.stopped, "Component was not stopped");
   });
 
-  it("should not stop components that werent started", async () => {
-    const bar = new PromiseComponent();
+  it("should try to stop components even those that weren't started", async () => {
+    const bar = PromiseComponent();
     const system = System({
-      foo: { init: new ErrorPromiseComponent() },
+      foo: ErrorPromiseComponent,
       bar: { init: bar, dependsOn: ["foo"] }
     })
     await system.start().catch(assert.ok);
     await system.stop();
-    assert(!bar.state.stopped, "Component was stopped");
+    assert(bar.state.stopped, "Component was stopped");
   });
 
   it("should tolerate when a promise component errors", async () => {
     await System({
-      foo: { init: new ErrorPromiseComponent() },
-      bar: { init: new PromiseComponent(), dependsOn: ["foo"] },
+      foo: ErrorPromiseComponent,
+      bar: { init: PromiseComponent(), dependsOn: ["foo"] },
     }).start()
       .catch(assert.ok);
   });
@@ -68,9 +74,9 @@ describe("System", () => {
   });
 
   it("should tolerate components without stop methods", async () => {
-    const system = System({ foo: { init: new Unstoppable() } });
-    const components = await system.start();
-    await system.stop();
+    const system = System.create({ foo: { init: new Unstoppable() } });
+    const components = await System.start(system);
+    await System.stop(system);
     assert(components.foo.stopped, "Component was not stopped");
   });
 
@@ -108,9 +114,9 @@ describe("System", () => {
 
   it("should inject multiple dependencies expressed in a single dependsOn", async () => {
     const components = await System({
-      bar: { init: new PromiseComponent() },
-      baz: { init: new PromiseComponent() },
-      foo: { init: new PromiseComponent(), dependsOn: ["bar", "baz"] },
+      bar: PromiseComponent(),
+      baz: PromiseComponent(),
+      foo: { init: PromiseComponent(), dependsOn: ["bar", "baz"] },
     }).start();
 
     assert(components.foo.dependencies.bar);
@@ -158,7 +164,7 @@ describe("System", () => {
   it("should reject invalid dependencies", () => {
     assert.throws(() => {
       System({ foo: { init: new PromiseComponent(), dependsOn: [1] } });
-    }, { message: "Component foo has an invalid dependency 1" });
+    }, { message: "Component foo has an invalid dependency {}" });
 
     assert.throws(() => {
       System({ foo: { init: new PromiseComponent(), dependsOn: [{}] } });
@@ -243,45 +249,47 @@ describe("System", () => {
     assert.equal(components.foo.dependencies.config.foo.bar, "baz");
   });
 
-  it.skip("should include components from other systems", async () => {
-    const components = await system
-      .include(System().add("foo", new PromiseComponent()))
+  it("should include components from other systems", async () => {
+    const components = await System()
+      .include(System({ foo: PromiseComponent }))
       .start();
     assert.ok(components.foo);
   });
 
-  it.skip("should be able to depend on included components", async () => {
-    const components = await system
-      .include(System().add("foo", new PromiseComponent()))
-      .add("bar", new PromiseComponent()).dependsOn("foo")
+  it("should include components from other systems via static functions", async () => {
+    const components = await System.start(System.merge(System.create(), System({ foo: PromiseComponent() })));
+    assert.ok(components.foo);
+  });
+
+  it("should be able to depend on included components", async () => {
+    const components = await System({ bar: { init: PromiseComponent(), dependsOn: ["foo"] } })
+      .include(System({ foo: PromiseComponent }))
       .start();
     assert.ok(components.bar.dependencies.foo);
   });
 
-  it.skip("should configure components from included systems", async () => {
-    const components = await system
-      .configure(new Config({ foo: { bar: "baz" } }))
-      .include(System().add("foo", new PromiseComponent()).dependsOn("config"))
+  it("should configure components from included systems", async () => {
+    const components = await System({ config: { init: new Config({ foo: { bar: "baz" } }) } })
+      .include(System({ foo: { init: PromiseComponent(), dependsOn: ["config"] } }))
       .start();
     assert.equal(components.foo.dependencies.config.bar, "baz");
   });
 
-  it.skip("should prefer components from other systems when merging", async () => {
-    const components = await system
-      .add("foo", 1)
-      .include(System().add("foo", 2))
-      .start();
+  it("should prefer components from other systems when merging", async () => {
+    const components = await System({ foo: 1 }).include(System({ foo: 2 })).start();
     assert.equal(components.foo, 2);
   });
 
-  it.skip("should group components", async () => {
-    const components = await System({
-      "foo.one": { init: 1 },
-      "foo.two": { init: 2 },
-      "foo": { init: {}, dependsOn: ["foo.one", "foo.two"] }
-    }).start();
+  it("should group components when depending on others", async () => {
+    const components = await System({ one: 1, two: 2, "foo": { dependsOn: ["one", "two"] } }).start();
     assert.equal(components.foo.one, 1);
     assert.equal(components.foo.two, 2);
+  });
+
+  it("should not group components when coming after others", async () => {
+    const components = await System({ one: 1, two: 2, "foo": { comesAfter: ["one", "two"] } }).start();
+    assert.ok(!components.foo.one);
+    assert.ok(!components.foo.two);
   });
 
   function PromiseComponent() {
