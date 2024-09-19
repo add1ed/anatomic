@@ -99,6 +99,18 @@ describe("System", () => {
     assert.ok(components.foo.fizz.started);
   });
 
+  it("should accept compact, array definitions", async () => {
+    const definition = {
+      config: { foo: { names: ["pizza", "pasta"] } },
+      foo: [(ds) => ds, "config"],
+      bar: [PromiseComponent(), ["config", "foo"]]
+    };
+    const system = await System(definition).start();
+    assert.equal(system.foo.config.names[1], "pasta");
+    assert.ok(system.bar.started);
+    assert.ok(system.bar.dependencies.foo);
+  })
+
   it("should reject attempts to add an undefined component", () => {
     assert.throws(() => {
       System({ foo: { init: undefined } });
