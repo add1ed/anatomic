@@ -1,13 +1,10 @@
 {
   "name": "anatomic",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Dependency-injection for nodejs applications.",
-  "files": [
-    "lib",
-    "index.js"
-  ],
-  "main": "index.js",
+  "main": "dist/index.js",
   "scripts": {
+    "build": "npx esbuild index.js --bundle --platform=node --target=node22.8 --outdir=dist --packages=external --minify-whitespace",
     "test": "node --test"
   },
   "repository": "github:add1ed/anatomic",
