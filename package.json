@@ -1,6 +1,6 @@
 {
   "name": "anatomic",
-  "version": "0.7.2",
+  "version": "0.8.0",
   "description": "Dependency-injection for nodejs applications.",
   "main": "dist/index.js",
   "scripts": {
